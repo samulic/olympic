@@ -478,3 +478,26 @@ g2.f <- ggplot(slopes[slopes$Sex=="Women",], aes(x=Height, y=Weight, color=Sport
 ggplotly(g2.f)
 ```
 
+Possono essere assegnate due o piu' medaglie per lo stesso evento (cioe' in caso di parita')?
+```{r}
+df %>% filter(!is.na(Medal)) %>% group_by(Games, Event, Medal) %>% summarise(n = n()) %>% filter(n>1)
+# Si', in questo caso un oro, un argento e due bronzi nella corsa 100m.
+filter(df, Games == "1896 Summer" & Event == "Athletics Men's 100 metres")
+
+```
+
+Esistono poi eventi per cui vengono assegnate piu' di tre medaglie, per esempio in Tennis Doubles.
+Quali sono gli eventi/sport che hanno assegnato piu' medaglie ?
+Quali sono gli eventi che mediamente assegnano piu' medaglie ?
+```{r}
+df %>% filter(!is.na(Medal)) %>% group_by(Games, Event) %>% summarise(n = n()) %>% arrange(desc(n))
+medals <- df %>% filter(!is.na(Medal)) %>% group_by(Games, Event) %>% 
+  summarise(sum_medal = n()) %>% arrange(desc(sum_medal))
+(medals_per_event <- medals %>% group_by(Event) %>% summarise(avg_medal = mean(sum_medal)) %>%
+  arrange(desc(avg_medal)))
+
+# Possiamo dedurre che per gli eventi per cui ci sono quattro o cinque medaglie ci sia un pareggio
+(pareggi <- filter(medals, sum_medal %in% c(4, 5)))
+# si ma che ce frega?!
+```
+
