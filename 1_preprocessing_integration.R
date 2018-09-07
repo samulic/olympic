@@ -133,3 +133,53 @@ data$Year <- as.ordered(data$Year)
 # Not interested in the names, we keep ID
 data$Name <- NULL
 save(data, teams_different, noc_country_different, file = "input/complete.RData")
+
+### PREPROCESSING
+# We want to modify the dataset so that each row contains the results achieved by one athlete 
+# in a determined event over all his participations in the olympics
+
+# How many different athletes participated to the Olympic games?
+length(unique(data$ID)) # 133.598
+# How many rows will our dataset have? That is how many different athletes/event ?
+distinct(data[c("ID", "Event")]) # 205.039
+distinct(data[c("ID", "Event", "Continent")]) # 205.393 --> there are 354 athletes that changed continent of origin
+distinct(data[c("ID", "Event", "Sub.region")]) # 205.534 --> there are 495 athletes that changed region of origin
+distinct(data[c("ID", "Event", "Country")]) # 205.876 --> there are 837 athletes that changed country of origin
+distinct(data[c("ID")]) # 133.598 unique athletes
+distinct(data[c("ID", "Continent")]) # 133.925 --> 133.925 - 133.598 = 327. Why not equal to 354 ??
+athl_country_change <- distinct(data[c("ID", "Country")])[duplicated(distinct(data[c("ID", "Country")])["ID"]),]
+
+athl_provenance_change_df <- filter(data, ID %in% athl_country_change$ID)
+
+# Create function to return the mode of the given vector v
+getmode <- function(v) {
+  uniqv <- unique(v)
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+# Create dataframe with countries and matching Continent/Sub.region
+countries_details <- select(data, Country, Sub.region, Continent) %>% unique()
+# Above should be equal to the number of unique countries --> no duplicated countries
+length(unique(data$Country)) # Correct!
+
+# For each athlete who changed the country of origin, get the mode of the most frequent country (or the first occurring)
+athl_mode_country <- tibble(ID = character(), Country = character()) # Initialize empty dataframe
+for (id in unique(athl_country_change$ID)) {
+  changing_countries <- filter(data, ID == id) %>% pull(Country) # Make it as vector
+  most_freq_country <- getmode(changing_countries)
+  athl_mode_country <- add_row(athl_mode_country, ID = id, Country = most_freq_country)
+}
+
+# Merge country with location details
+athl_mode_df <- left_join(athl_mode_country, countries_details, by = "Country")
+# Now substitute these definitive values in the df
+# For sure this for loop is not the best way to do it but it's effective
+for (id in unique(athl_mode_df$ID)) {
+  data$Country[data$ID == id] <- athl_mode_df[athl_mode_df$ID == id, ]$Country
+  # We could join the countries_details df with the dataset, but we replace everything here manually
+  data$Sub.region[data$ID == id] <- athl_mode_df[athl_mode_df$ID == id, ]$Sub.region
+  data$Continent[data$ID == id] <- athl_mode_df[athl_mode_df$ID == id, ]$Continent
+}
+
+## TODO
+grouped <- group_by(data, ID, Sex, Sport, Event, Country, Continent, Sub.region) %>% 
+  summarise(num_partecipaz = n(), )
