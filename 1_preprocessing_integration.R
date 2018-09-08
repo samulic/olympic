@@ -129,10 +129,10 @@ filter(data[,c("NOC", "Country")], NOC %in% doppioni[,1] | Country %in% doppioni
 noc_country_different <- filter(data[,c("NOC", "Country")], NOC %in% doppioni[,1] | Country %in% doppioni[,2]) %>% unique()
 data$NOC <- NULL
 # Order Year
-data$Year <- as.ordered(data$Year)
+#data$Year <- as.ordered(data$Year)
 # Not interested in the names, we keep ID
 data$Name <- NULL
-save(data, teams_different, noc_country_different, file = "input/complete.RData")
+save(data, teams_different, noc_country_different, file = "input/prepr.rdata")
 
 ### PREPROCESSING
 # We want to modify the dataset so that each row contains the results achieved by one athlete 
@@ -180,6 +180,14 @@ for (id in unique(athl_mode_df$ID)) {
   data$Continent[data$ID == id] <- athl_mode_df[athl_mode_df$ID == id, ]$Continent
 }
 
-## TODO
-grouped <- group_by(data, ID, Sex, Sport, Event, Country, Continent, Sub.region) %>% 
-  summarise(num_partecipaz = n(), )
+# TRANSFORM dataset
+data$Medal <- fct_explicit_na(data$Medal, "NoMedal")
+data$Year <- as.numeric(as.character(data$Year))
+df.original <- data
+data <- group_by(data, ID, Sex, Sport, Event, Medal) %>% 
+  summarise(Age = mean(Age), Weight = mean(Weight), Height = mean(Height), Year_avg = mean(Year),
+            Country = first(Country), Continent = first(Continent), Sub.region = first(Sub.region),
+            medal_cnt = sum(Medal == Medal)) %>%
+  spread(Medal, medal_cnt, fill = 0)
+
+save(list = c("df.original", "data"), file = "input/datasets.rdata")
