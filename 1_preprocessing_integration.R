@@ -1,13 +1,14 @@
 ## Questo file contiene alcuni steps di preprocessing come per esempio
 # - eliminazione di "Art competition" dagli sport
 # - shift dell'anno delle olimpiadi invernali di due, cosi' da avere il medesimo anno per estate/inverno
+#    -- questo step sarebbe meglio evitare di farlo con il dataset trasformato con una sola osservazione per atleta
+#    -- in cui l'anno identifica la media degli anni (ponderata per presenza) delle proprie partecipazioni olimpiche
 # - eliminazione dell'attributo "note" relativo all'eventuale descrizione del comitato olimpico/nazione
 # - eliminazione dell'attributo "games" ricavabile concatenando "Year" e "Season"
 # - eliminazione dell'attributo "team" perche' spesso identico a "Country" e se non identico, comunque appartenente a "Country"
 # - eliminazione dell'attributo 'name' perche' non utile se non in fase esplorativa (chi vince le medaglie?), inoltre abbiamo ID
-# - settaggio dell'attrobuto 'year' come fattore ordinato
-## Viene inoltre integrato il dataset con il dato relativo alla zona geografica di appartenenza di ogni 
-## comitato olimpico (NOC), piu' precisamente viene aggiunta una colonna di "sottozona geografica" con 17 livelli
+# - viene inoltre integrato il dataset con il dato relativo alla zona geografica di appartenenza di ogni 
+#   comitato olimpico (NOC), piu' precisamente viene aggiunta una colonna di "sottozona geografica" con 17 livelli
 
 library(tidyverse)
 
@@ -130,9 +131,9 @@ noc_country_different <- filter(data[,c("NOC", "Country")], NOC %in% doppioni[,1
 data$NOC <- NULL
 # Order Year
 #data$Year <- as.ordered(data$Year)
-# Not interested in the names, we keep ID
+# Not interested in the names, we only keep ID for now
 data$Name <- NULL
-save(data, teams_different, noc_country_different, file = "input/prepr.rdata")
+#save(data, teams_different, noc_country_different, file = "input/prepr.rdata")
 
 ### PREPROCESSING
 # We want to modify the dataset so that each row contains the results achieved by one athlete 
@@ -140,7 +141,7 @@ save(data, teams_different, noc_country_different, file = "input/prepr.rdata")
 
 # How many different athletes participated to the Olympic games?
 length(unique(data$ID)) # 133.598
-# How many rows will our dataset have? That is how many different athletes/event ?
+# How many rows will our dataset have? That is how many different athletes/event ? ADD YEAR
 distinct(data[c("ID", "Event")]) # 205.039
 distinct(data[c("ID", "Event", "Continent")]) # 205.393 --> there are 354 athletes that changed continent of origin
 distinct(data[c("ID", "Event", "Sub.region")]) # 205.534 --> there are 495 athletes that changed region of origin
@@ -180,14 +181,117 @@ for (id in unique(athl_mode_df$ID)) {
   data$Continent[data$ID == id] <- athl_mode_df[athl_mode_df$ID == id, ]$Continent
 }
 
-# TRANSFORM dataset
-data$Medal <- fct_explicit_na(data$Medal, "NoMedal")
-data$Year <- as.numeric(as.character(data$Year))
-df.original <- data
-data <- group_by(data, ID, Sex, Sport, Event, Medal) %>% 
-  summarise(Age = mean(Age), Weight = mean(Weight), Height = mean(Height), Year_avg = mean(Year),
-            Country = first(Country), Continent = first(Continent), Sub.region = first(Sub.region),
-            medal_cnt = sum(Medal == Medal)) %>%
-  spread(Medal, medal_cnt, fill = 0)
+# Feature creation: create 'collinear' column, can be removed when needed
+# add boolean "isTeamEvent", 1 if the sport event is played by teams 
+data$isTeamEvent <- as.factor(ifelse(grepl("Team", data$Event), 1, 0))
+# add boolean "winMedal", 1 if wins
+data$winMedal <- ifelse(is.na(data$Medal), 0, 1)
 
-save(list = c("df.original", "data"), file = "input/datasets.rdata")
+# MISSING HANDLING
+# tipi di variabili
+status <- funModeling::df_status(data, print_results = F)
+status
+
+(missing.loc <- filter(data, is.na(Continent) | is.na(Sub.region)))
+# Manually set missing regions for "Kosovo"
+data$Continent[which(data$Country == "Kosovo")] <- "Europe"
+data$Sub.region[which(data$Country == "Kosovo")] <- "Southern Europe"
+# Save dataframe as original
+df.original <- data
+# Remove 55 rows of the "Individual Olympic Athletes" because they have no provenance
+# Btw, they didn't win anything...
+data <- data[!data$Country == "Individual Olympic Athletes",]
+
+status <- funModeling::df_status(data, print_results = F)
+status
+data$Medal <- fct_explicit_na(data$Medal, "NoMedal")
+
+(missing.age <- filter(data, is.na(Age)))
+(missing.body <- filter(data, is.na(Weight) | is.na(Height)))
+# Could it be worth to impute Age? Let's see if we have missing only age..
+dim(missing.age[!is.na(missing.age$Weight) & !is.na(missing.age$Height),])[1]
+# 688 cases missing only Age out 8000+, not worth imputing (with model)
+# Count number of missing either height or weight
+CountPerGroup <- function(x, groups) {
+  data.set <- subset(x, Year %in% groups)
+  ans <- sapply(split(data.set, data.set$Year), 
+                function(y) sum(!complete.cases(y)))
+  return(data.frame(Year = names(ans), nrow_missing = unname(ans)))
+}
+(missing.per.year <- CountPerGroup(data, unique(data$Year)) %>% mutate(Year = (as.character(Year))))
+nrow.per.year <- group_by(data, Year) %>% summarise(nrow = n()) %>% mutate(Year = as.character(Year))
+missing.per.year <- left_join(missing.per.year, nrow.per.year, by = "Year")
+missing.per.year$missing_ratio <- missing.per.year$nrow_missing / missing.per.year$nrow
+missing.per.year$Year <- as.integer(missing.per.year$Year)
+missing.per.year %>% group_by(Year) %>% summarise(missing_ratio = weighted.mean(missing_ratio, nrow), nrow = sum(nrow)) %>%
+  ggplot(aes(x = Year, y = missing_ratio)) +
+  geom_point(aes(size = nrow)) + geom_vline(xintercept = 1956, color = "red") +
+  xlab("Year") + ylab("Ratio of missing weight or height rows") +
+  ggtitle("Missing body details over time", subtitle = "Dot size indicates the number of rows")
+# Image saved in 'ouput/2_missingRowsDistribution.png
+
+data <- filter(data, Year > 1956)
+status = funModeling::df_status(data, print_results = F)
+status
+
+data <- data[complete.cases(data),]
+
+## TRANSFORM dataset
+df.original.nomissing <- data
+# save ID details to be joined later
+id.details <- group_by(data, ID) %>%
+  summarise(Age = mean(Age), Weight = mean(Weight), 
+            Height = mean(Height), Year = round(mean(Year)), 
+            Country = first(Country),  Sub.region = first(Sub.region), Continent = first(Continent))
+
+events <- group_by(data, ID, Sex, Sport, Event, Medal) %>% 
+  summarise(medal_cnt = sum(Medal == Medal)) %>%
+  spread(Medal, medal_cnt, fill = 0) 
+
+sports <- group_by(data, ID, Sex, Sport, Medal) %>% 
+  summarise(medal_cnt = sum(Medal == Medal)) %>%
+  spread(Medal, medal_cnt, fill = 0) 
+
+# Add boolean "winMedal", 1 if ever won a medal, 0 otherwise
+events$winMedal <- as.factor(ifelse((events$Gold == 0 & events$Silver == 0 & events$Bronze == 0), 0, 1))
+sports$winMedal <- as.factor(ifelse((sports$Gold == 0 & sports$Silver == 0 & sports$Bronze == 0), 0, 1))
+# Add boolean 'isTeamEvent'
+events$isTeamEvent <- as.factor(ifelse(grepl("Team", events$Event), 1, 0))
+
+# Instead create a winMedalRatio to indicate the frequency that athlete wins a medal out of his participations
+#events$winMedalRatio <- rowSums(events[c("Gold", "Silver", "Bronze")]) / rowSums(events[c("Gold", "Silver", "Bronze", "NoMedal")])
+
+# Create dataframes, one for each individual atlete-event, one for each individual athl-sport
+events.df <- left_join(events, id.details, by = "ID")
+sports.df <- left_join(sports, id.details, by = "ID")
+
+# Which athletes participated in different sports? Find IDs and display details...
+(sports.dupes.id <- sports.df[which(duplicated(sports.df[c("ID")])),"ID"])
+right_join(events.df, sports.dupes.id, by = "ID")
+
+# Each row contains the medals won by an athlete in a specific EVENT (SPORT if using "sports.df")
+# during his whole life therefore ID column is not unique because some participated in different 'events'
+# and some (310) in different 'sports' also.
+# Use events.df
+data <- events.df
+
+# Could we still identify an athlete withoud ID?
+distinct(data[c("Sex", "Age", "Weight", "Height", "Year", "Country")]) # NO, there are 94.619 rows instead of 95.152
+# How many unique athletes ?
+distinct(data["ID"]) # 95.152
+distinct(data[c("ID", "Sport")]) # 95.462
+distinct(data[c("ID", "Sport", "isTeamEvent")]) # 102.480
+distinct(data[c("ID", "Sport", "Event")]) # 143.640
+
+# create dataset 
+# (1) Remove 'Event' (489 levels) but leave 'isTeamEvent'
+# Save ID details to be joined later
+id.details <- unique(data[c("ID", "Sex", "Age", "Weight", "Height", "Year", "Country", "Sub.region", "Continent")]) # 95.152 obs
+
+d <- group_by(data, ID, Sport, isTeamEvent) %>% 
+  summarise(Gold = sum(Gold), Silver = sum(Silver), Bronze = sum(Bronze),
+            NoMedal = sum(NoMedal), winMedal = as.factor(max(as.numeric(as.character(winMedal)))))
+head(d)
+data <- left_join(d, id.details, by = "ID")
+
+save(list = c("df.original", "df.original.nomissing", "events.df", "sports.df", "data"), file = "input/datasets.rdata")

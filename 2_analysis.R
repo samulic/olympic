@@ -59,3 +59,4 @@ status = df_status(data, print_results = F)
 status
 data <- data[complete.cases(data),]
 save(data, file = "input/noMissing.rdata")
+
