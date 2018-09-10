@@ -10,15 +10,6 @@ colnames(data)
 str(data)
 
 status <- funModeling::df_status(data)
-# Each row contains the medals won by an athlete in a specific EVENT (SPORT if using "sports.df")
-# during his whole life therefore ID column is not unique because some participated in different 'events'
-# Could we still identify an athlete withoud ID?
-distinct(data[c("Sex", "Age", "Weight", "Height", "Year", "Country")]) # NO, there are 94.619 rows instead of 95.152
-# How many unique athletes ?
-distinct(data["ID"]) # 95.152
-distinct(data[c("ID", "Sport")]) # 95.462
-distinct(data[c("ID", "Sport", "isTeamEvent")]) # 102.480
-distinct(data[c("ID", "Sport", "Event")]) # 143.640
 
 
 ### Analysis target: predict if athlete wins a medal or not
@@ -219,7 +210,8 @@ table(true = test$winMedal, pred = exp.p.te_decision$predict)
 
 # vedi errori di riga
 prop.table(table(true = test$winMedal, pred <- exp.p.te_decision$predict), margin = 1)
-
+save(file = "input/02_dataset_knn.rdata", list = c("data", "d", "df.original", "events.df", "sports.df", "id.details", 
+                                                   "knn", "knn.30", "dummy.35.test", "dummy.35.train"))
 
 ## Rpart performance
 # - threshold
